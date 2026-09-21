@@ -3,7 +3,5 @@ uvicorn
 python-multipart
 pypdf
 python-docx
-chromadb
-sentence-transformers
 python-dotenv
 openai

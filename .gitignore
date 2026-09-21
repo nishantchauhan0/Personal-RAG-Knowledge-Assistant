@@ -1,5 +1,7 @@
 .env
 .venv/
 chroma_db/
+vector_store.json
+documents/
 __pycache__/
 *.pyc

@@ -1,28 +1,73 @@
-import chromadb
-import uuid
+import json
+import math
+from pathlib import Path
 
 
-# ========================================
-# CHROMA DB CLIENT
-# ========================================
-
-client = chromadb.PersistentClient(
-    path="chroma_db"
-)
+STORE_FILE = Path("vector_store.json")
 
 
-# ========================================
-# COLLECTION
-# ========================================
+def load_store():
+    if not STORE_FILE.exists():
+        return []
 
-collection = client.get_or_create_collection(
-    name="rag_documents"
-)
+    try:
+        with open(
+            STORE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+            return json.load(file)
+
+    except Exception:
+        return []
 
 
-# ========================================
-# STORE CHUNKS
-# ========================================
+def save_store(data):
+    with open(
+        STORE_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
+        json.dump(
+            data,
+            file,
+            ensure_ascii=False
+        )
+
+
+def cosine_similarity(vector_a, vector_b):
+    if not vector_a or not vector_b:
+        return 0.0
+
+    dot_product = sum(
+        a * b
+        for a, b in zip(
+            vector_a,
+            vector_b
+        )
+    )
+
+    magnitude_a = math.sqrt(
+        sum(
+            value * value
+            for value in vector_a
+        )
+    )
+
+    magnitude_b = math.sqrt(
+        sum(
+            value * value
+            for value in vector_b
+        )
+    )
+
+    if magnitude_a == 0 or magnitude_b == 0:
+        return 0.0
+
+    return dot_product / (
+        magnitude_a * magnitude_b
+    )
+
 
 def store_chunks(
     chunks,
@@ -30,95 +75,62 @@ def store_chunks(
     document_name
 ):
     """
-    Store document chunks and embeddings
-    in ChromaDB.
-
-    Each chunk gets a unique ID and metadata
-    containing the document name and chunk index.
+    Store chunks and their lightweight embeddings.
     """
 
-    ids = [
-        f"{uuid.uuid4()}_{i}"
-        for i in range(len(chunks))
-    ]
+    store = load_store()
 
+    for index, (chunk, embedding) in enumerate(
+        zip(chunks, embeddings)
+    ):
+        store.append(
+            {
+                "document_name": document_name,
+                "chunk_index": index,
+                "text": chunk,
+                "embedding": embedding
+            }
+        )
 
-    metadata = [
-        {
-            "document_name": document_name,
-            "chunk_index": i
-        }
-        for i in range(len(chunks))
-    ]
-
-
-    collection.upsert(
-        ids=ids,
-        documents=chunks,
-        embeddings=embeddings.tolist(),
-        metadatas=metadata
-    )
-
+    save_store(store)
 
     return len(chunks)
 
-
-# ========================================
-# SEARCH RELEVANT CHUNKS
-# ========================================
 
 def search_chunks(
     query_embedding,
     top_k=5
 ):
     """
-    Search relevant chunks from all uploaded
-    documents using vector similarity.
+    Search stored chunks using cosine similarity.
     """
 
-    total_documents = collection.count()
+    store = load_store()
 
+    if not store:
+        return []
 
-    # ========================================
-    # EMPTY DATABASE CHECK
-    # ========================================
+    results = []
 
-    if total_documents == 0:
+    for item in store:
 
-        return {
-            "documents": [[]],
-            "distances": [[]],
-            "metadatas": [[]]
-        }
+        similarity = cosine_similarity(
+            query_embedding,
+            item["embedding"]
+        )
 
+        results.append(
+            {
+                "text": item["text"],
+                "document_name": item["document_name"],
+                "chunk_index": item["chunk_index"],
+                "score": similarity
+            }
+        )
 
-    # ========================================
-    # LIMIT TOP K
-    # ========================================
-
-    top_k = min(
-        top_k,
-        total_documents
+    results.sort(
+        key=lambda item: item["score"],
+        reverse=True
     )
 
-
-    # ========================================
-    # VECTOR SEARCH
-    # ========================================
-
-    results = collection.query(
-        query_embeddings=[
-            query_embedding.tolist()
-        ],
-
-        n_results=top_k,
-
-        include=[
-            "documents",
-            "distances",
-            "metadatas"
-        ]
-    )
-
-
-    return results
+    return results[:top_k]
